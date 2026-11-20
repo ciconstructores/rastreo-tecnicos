@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f3d5e">
+<title>Rastreo de jornada</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f3f5f8;color:#1b2430;min-height:100vh;display:flex;flex-direction:column}
+  header{background:#0f3d5e;color:#fff;padding:18px 20px}
+  header h1{margin:0;font-size:1.15rem}
+  header p{margin:4px 0 0;opacity:.8;font-size:.9rem}
+  main{flex:1;padding:20px;max-width:520px;width:100%;margin:0 auto}
+  .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:16px}
+  .notice{font-size:.9rem;line-height:1.45;color:#3b4654}
+  .notice b{color:#1b2430}
+  button.big{width:100%;border:0;border-radius:14px;padding:22px;font-size:1.2rem;font-weight:700;color:#fff;cursor:pointer;background:#1a8a4a}
+  button.big.stop{background:#c0392b}
+  button.big:disabled{opacity:.5}
+  .status{display:flex;align-items:center;gap:10px;font-weight:600}
+  .dot{width:12px;height:12px;border-radius:50%;background:#9aa4b0;flex:none}
+  .dot.on{background:#1a8a4a;box-shadow:0 0 0 0 rgba(26,138,74,.6);animation:pulse 1.6s infinite}
+  @keyframes pulse{to{box-shadow:0 0 0 12px rgba(26,138,74,0)}}
+  dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:14px 0 0;font-size:.92rem}
+  dt{color:#6b7684} dd{margin:0;font-variant-numeric:tabular-nums}
+  .err{color:#c0392b;font-size:.9rem;margin-top:10px}
+  .tip{font-size:.85rem;color:#6b7684;line-height:1.4}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rastreo de jornada</h1>
+  <p id="who">Cargando…</p>
+</header>
+<main>
+  <div class="card notice" id="consent">
+    <b>¿Qué hace esta página?</b><br>
+    Mientras tengas la jornada iniciada, tu teléfono enviará tu ubicación GPS a la empresa para registrar el recorrido de servicio.
+    No se envía nada antes de que pulses <b>Iniciar jornada</b>, y puedes detenerlo en cualquier momento con <b>Finalizar jornada</b>.
+  </div>
+
+  <div class="card">
+    <button class="big" id="btn" disabled>Iniciar jornada</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="card">
+    <div class="status"><span class="dot" id="dot"></span><span id="state">Jornada detenida</span></div>
+    <dl>
+      <dt>Último envío</dt><dd id="last">—</dd>
+      <dt>Precisión</dt><dd id="acc">—</dd>
+      <dt>Puntos enviados</dt><dd id="sent">0</dd>
+      <dt>Pendientes</dt><dd id="pend">0</dd>
+    </dl>
+  </div>
+
+  <p class="tip">Mantén esta página abierta durante la jornada. Para que el registro continúe con la pantalla apagada, usa la app <b>Traccar Client</b> configurada por tu supervisor.</p>
+</main>
+<script>
+const token = decodeURIComponent(location.hash.slice(1) || new URLSearchParams(location.search).get('t') || '');
+const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY, { auth: { persistSession: false } });
+const $ = (id) => document.getElementById(id);
+const MIN_INTERVAL = 15000, MIN_DIST = 25; // ms / metros
+let watchId = null, lastSent = null, sentCount = 0, wakeLock = null, flushing = false;
+let queue = [];
+try { queue = JSON.parse(localStorage.getItem('q_' + token) || '[]'); } catch {}
+const saveQ = () => { try { localStorage.setItem('q_' + token, JSON.stringify(queue.slice(-2000))); } catch {} ; $('pend').textContent = queue.length; };
+saveQ();
+
+function dist(a, b) {
+  const r = Math.PI / 180, x = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2;
+  return 12742000 * Math.asin(Math.sqrt(x));
+}
+async function rpc(fn, args) {
+  const { data, error } = await sb.rpc(fn, args);
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function flush() {
+  if (flushing || !queue.length) return;
+  flushing = true;
+  const batch = queue.slice(0, 200);
+  try {
+    await rpc('track', { p_token: token, p_points: batch, p_source: 'web' });
+    queue.splice(0, batch.length); sentCount += batch.length;
+    $('sent').textContent = sentCount; $('err').textContent = '';
+    $('last').textContent = new Date().toLocaleTimeString('es-CO');
+  } catch (e) { $('err').textContent = /válido/.test(e.message) ? 'Enlace no válido. Pide uno nuevo a tu supervisor.' : 'Sin conexión: los puntos se guardan y se enviarán luego.'; }
+  saveQ(); flushing = false;
+  if (queue.length && !$('err').textContent) flush();
+}
+
+let battery = null;
+if (navigator.getBattery) navigator.getBattery().then((b) => { battery = b; }).catch(() => {});
+
+function onPos(pos) {
+  const c = pos.coords;
+  const pt = { lat: c.latitude, lon: c.longitude, accuracy: c.accuracy, heading: c.heading,
+    speed: c.speed != null ? c.speed * 3.6 : null, battery: battery ? Math.round(battery.level * 100) : null, ts: pos.timestamp || Date.now() };
+  $('acc').textContent = Math.round(c.accuracy) + ' m';
+  if (lastSent && pt.ts - lastSent.ts < MIN_INTERVAL && dist(lastSent, pt) < MIN_DIST) return;
+  lastSent = pt; queue.push(pt); saveQ(); flush();
+}
+function onErr(e) {
+  const msg = { 1: 'Permiso de ubicación denegado. Actívalo en los ajustes del navegador.', 2: 'No se pudo obtener la ubicación. Revisa que el GPS esté encendido.', 3: 'El GPS tardó demasiado; reintentando…' };
+  $('err').textContent = msg[e.code] || e.message;
+}
+
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (watchId !== null && document.visibilityState === 'visible') { keepAwake(); flush(); } });
+
+function setUI(on) {
+  $('btn').textContent = on ? 'Finalizar jornada' : 'Iniciar jornada';
+  $('btn').classList.toggle('stop', on);
+  $('dot').classList.toggle('on', on);
+  $('state').textContent = on ? 'Enviando ubicación' : 'Jornada detenida';
+}
+
+async function start() {
+  if (!('geolocation' in navigator)) { $('err').textContent = 'Este navegador no tiene GPS disponible.'; return; }
+  if (!isSecureContext) { $('err').textContent = 'La página debe abrirse con https:// para usar el GPS.'; return; }
+  watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  setUI(true); keepAwake();
+  try { localStorage.setItem('on_' + token, '1'); } catch {}
+  rpc('set_tracking', { p_token: token, p_on: true }).catch(() => {});
+}
+function stop() {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null; lastSent = null; setUI(false); flush();
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  try { localStorage.removeItem('on_' + token); } catch {}
+  rpc('set_tracking', { p_token: token, p_on: false }).catch(() => {});
+}
+$('btn').onclick = () => (watchId === null ? start() : stop());
+setInterval(flush, 30000);
+window.addEventListener('online', flush);
+
+(token ? rpc('tech_info', { p_token: token }) : Promise.resolve(null)).then((d) => {
+  if (!d) { $('who').textContent = 'Enlace no válido. Pide uno nuevo a tu supervisor.'; return; }
+  $('who').textContent = 'Técnico: ' + d.name;
+  $('btn').disabled = false;
+  let resume = false; try { resume = localStorage.getItem('on_' + token) === '1'; } catch {}
+  if (resume) start();
+}).catch(() => { $('who').textContent = 'Sin conexión con el servidor'; });
+</script>
+</body>
+</html>

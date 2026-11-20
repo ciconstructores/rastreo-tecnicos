@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rastreo de técnicos</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<style>
+  :root{--pri:#0f3d5e;--ok:#1a8a4a;--warn:#d68910;--bad:#c0392b;--mut:#6b7684;--line:#e3e7ec}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1b2430;font-size:14px}
+  #app{display:grid;grid-template-columns:390px 1fr;grid-template-rows:auto 1fr;height:100%}
+  header{grid-column:1/3;background:var(--pri);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:8px 16px;gap:12px}
+  header .brand{display:flex;align-items:center;gap:10px}
+  .logo{background:#fff;color:var(--pri);font-weight:800;border-radius:8px;padding:4px 8px;font-size:.8rem;letter-spacing:.5px}
+  header h1{font-size:1rem;margin:0;font-weight:600}
+  header .right{display:flex;align-items:center;gap:10px;font-size:.8rem}
+  header .hb{background:rgba(255,255,255,.15);border:0;color:#fff;padding:6px 10px;border-radius:8px;cursor:pointer;font:inherit}
+  aside{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:#fafbfc}
+  nav{display:flex;border-bottom:1px solid var(--line);background:#fff}
+  nav button{flex:1;border:0;background:none;padding:11px 4px;font-size:.82rem;cursor:pointer;color:var(--mut);border-bottom:3px solid transparent}
+  nav button.on{color:var(--pri);border-color:var(--pri);font-weight:700}
+  .pane{display:none;overflow:auto;padding:12px;flex:1}
+  .pane.on{display:block}
+  #map{min-height:0;background:#eef1f4}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:center}
+  .kpi b{display:block;font-size:1.3rem;color:var(--pri)} .kpi span{font-size:.72rem;color:var(--mut)}
+  .item{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer}
+  .item:hover{border-color:#b8c2cd}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .badge{font-size:.72rem;padding:2px 8px;border-radius:20px;color:#fff;white-space:nowrap}
+  .b-on{background:var(--ok)} .b-idle{background:var(--warn)} .b-off{background:#9aa4b0}
+  .sub{color:var(--mut);font-size:.8rem;margin-top:3px}
+  label{display:block;font-size:.8rem;color:var(--mut);margin:8px 0 3px}
+  input,select{width:100%;padding:9px;border:1px solid #cdd4dc;border-radius:8px;font:inherit}
+  button.btn{border:0;border-radius:8px;padding:9px 12px;background:var(--pri);color:#fff;cursor:pointer;font:inherit;font-weight:600}
+  button.btn.sec{background:#e8edf2;color:#1b2430} button.btn.del{background:none;color:var(--bad);padding:4px 6px}
+  button:disabled{opacity:.6}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .stat b{display:block;font-size:1.1rem} .stat span{font-size:.75rem;color:var(--mut)}
+  table{width:100%;border-collapse:collapse;font-size:.78rem;background:#fff}
+  th,td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:left} th{position:sticky;top:0;background:#f0f3f6}
+  tr.click{cursor:pointer} tr.click:hover{background:#f5f8fb}
+  .ev-entrada{color:var(--ok);font-weight:700} .ev-salida{color:var(--bad);font-weight:700}
+  .hint{background:#fff7e6;border:1px solid #f3d9a4;padding:8px 10px;border-radius:8px;font-size:.8rem;margin:8px 0}
+  .mk{background:var(--c);color:#fff;border:2px solid #fff;border-radius:50%;width:30px!important;height:30px!important;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+  .mk.stale{filter:grayscale(1);opacity:.7}
+  #login{position:fixed;inset:0;background:linear-gradient(135deg,#0b2c44,#1b5e86);display:flex;align-items:center;justify-content:center;z-index:5000}
+  #login form{background:#fff;padding:28px;border-radius:16px;width:340px;max-width:92vw;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+  #login .logo{display:inline-block;background:var(--pri);color:#fff}
+  #login h2{margin:14px 0 2px;font-size:1.3rem}
+  #login p{margin:0 0 10px;color:var(--mut);font-size:.85rem}
+  .err{color:var(--bad);font-size:.85rem;min-height:1.1em;margin-top:8px}
+  #toasts{position:fixed;right:14px;bottom:14px;z-index:4000;display:flex;flex-direction:column;gap:8px}
+  .toast{background:#1b2430;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.3);max-width:320px;font-size:.85rem}
+  #modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:4500}
+  #modal .box{background:#fff;border-radius:14px;padding:20px;width:min(440px,92vw);max-height:92vh;overflow:auto}
+  code{background:#f0f3f6;padding:2px 5px;border-radius:5px;word-break:break-all;font-size:.8rem}
+  @media (max-width:800px){#app{grid-template-columns:1fr;grid-template-rows:auto 45vh 1fr}header{grid-column:1}aside{order:3;border:0}#map{order:2}header h1,#who{display:none}}
+  @media print{nav,header,#toasts,#login{display:none!important}#app{display:block}#map{height:420px}.pane{display:none}#p-routes{display:block}}
+</style>
+</head>
+<body>
+<div id="login">
+  <form id="loginForm">
+    <span class="logo" id="loginLogo"></span>
+    <h2>Rastreo de técnicos</h2>
+    <p>Ingresa con tu cuenta de supervisor</p>
+    <label>Usuario o correo</label><input type="text" id="em" autocomplete="username" autocapitalize="none" required>
+    <label>Contraseña</label><input type="password" id="pw" autocomplete="current-password" required>
+    <button class="btn" id="loginBtn" style="width:100%;margin-top:16px;padding:12px">Entrar</button>
+    <div class="err" id="loginErr"></div>
+    <p style="margin-top:8px;text-align:center"><a href="#" id="forgot" style="color:var(--pri)">¿Olvidaste tu contraseña?</a></p>
+  </form>
+  <form id="newPwForm" style="display:none">
+    <h2>Nueva contraseña</h2>
+    <label>Escribe tu nueva contraseña</label><input type="password" id="npw" minlength="8" autocomplete="new-password" required>
+    <button class="btn" style="width:100%;margin-top:16px;padding:12px">Guardar</button>
+    <div class="err" id="npwErr"></div>
+  </form>
+</div>
+
+<div id="app">
+  <header>
+    <div class="brand"><span class="logo" id="hdrLogo"></span><h1>Rastreo de técnicos en tiempo real</h1></div>
+    <div class="right"><span id="live">● conectando…</span><span id="who"></span><button class="hb" id="logout">Salir</button></div>
+  </header>
+  <aside>
+    <nav>
+      <button data-p="live" class="on">En vivo</button><button data-p="routes">Recorridos</button>
+      <button data-p="fences">Clientes</button><button data-p="events">Visitas</button><button data-p="techs">Técnicos</button>
+    </nav>
+    <section class="pane on" id="p-live">
+      <div class="kpis"><div class="kpi"><b id="k1">0</b><span>En línea</span></div><div class="kpi"><b id="k2">0</b><span>Visitas hoy</span></div><div class="kpi"><b id="k3">0</b><span>km hoy</span></div></div>
+      <div id="liveList"></div>
+    </section>
+    <section class="pane" id="p-routes">
+      <label>Técnico</label><select id="rTech"></select>
+      <label>Fecha</label><input type="date" id="rDate">
+      <div class="grid2"><div><label>Desde</label><input type="time" id="rFrom" value="00:00"></div><div><label>Hasta</label><input type="time" id="rTo" value="23:59"></div></div>
+      <div class="grid2" style="margin-top:10px"><button class="btn" id="rLoad">Ver recorrido</button><button class="btn sec" id="rCsv">Exportar Excel (CSV)</button></div>
+      <div id="rOut"></div>
+    </section>
+    <section class="pane" id="p-fences">
+      <p class="sub">Cada cliente es un círculo en el mapa. Cuando un técnico entra o sale se registra la visita.</p>
+      <button class="btn" id="fAdd" style="width:100%">+ Nuevo cliente (clic en el mapa)</button>
+      <div id="fForm" style="display:none">
+        <div class="hint" id="fHint">Haz clic en el mapa en la ubicación del cliente.</div>
+        <label>Nombre</label><input id="fName" placeholder="Ej: Cliente Edificio Calle 80">
+        <label>Radio (metros)</label><input id="fRad" type="number" value="100" min="20">
+        <div class="grid2" style="margin-top:10px"><button class="btn" id="fSave">Guardar</button><button class="btn sec" id="fCancel">Cancelar</button></div>
+      </div>
+      <div id="fList" style="margin-top:12px"></div>
+    </section>
+    <section class="pane" id="p-events">
+      <div class="grid2"><div><label>Fecha</label><input type="date" id="eDate"></div><div style="align-self:end"><button class="btn" id="eLoad" style="width:100%">Ver</button></div></div>
+      <div id="eList" style="margin-top:10px"></div>
+    </section>
+    <section class="pane" id="p-techs">
+      <label>Nombre del técnico</label><input id="tName" placeholder="Ej: Juan Pérez">
+      <label>Teléfono (opcional)</label><input id="tPhone">
+      <button class="btn" id="tAdd" style="width:100%;margin-top:10px">Agregar técnico</button>
+      <div id="tList" style="margin-top:14px"></div>
+    </section>
+  </aside>
+  <div id="map"></div>
+</div>
+<div id="toasts"></div>
+<div id="modal"><div class="box" id="modalBox"></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const COLORS = ['#2e86de', '#e67e22', '#8e44ad', '#16a085', '#c0392b', '#2c3e50', '#d35400', '#27ae60', '#e84393', '#6c5ce7'];
+const ONLINE_MS = 3 * 60e3;
+const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+$('loginLogo').textContent = $('hdrLogo').textContent = CONFIG.EMPRESA || 'Rastreo';
+let techs = [], fences = [], channel = null, started = false;
+const markers = {}, trails = {};
+
+// ---------- mapa ----------
+const map = L.map('map').setView([4.65, -74.08], 12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+const fenceLayer = L.layerGroup().addTo(map), routeLayer = L.layerGroup().addTo(map), trailLayer = L.layerGroup().addTo(map);
+
+// ---------- utilidades ----------
+const fmtT = (ts) => new Date(ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const fmtH = (ts) => new Date(ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+const fmtDT = (ts) => new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+function ago(ts) { const s = (Date.now() - ts) / 1000; return s < 60 ? 'hace ' + Math.max(0, Math.round(s)) + ' s' : s < 3600 ? 'hace ' + Math.round(s / 60) + ' min' : s < 86400 ? 'hace ' + Math.round(s / 3600) + ' h' : fmtDT(ts); }
+function dist(a, b) { const r = Math.PI / 180, x = Math.sin((b.lat - a.lat) * r / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin((b.lon - a.lon) * r / 2) ** 2; return 12742000 * Math.asin(Math.sqrt(x)); }
+const color = (id) => COLORS[(id - 1) % COLORS.length];
+const initials = (n) => n.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+const techName = (id) => techs.find((t) => t.id === id)?.name || 'Técnico ' + id;
+const normP = (p) => ({ ...p, ts: Date.parse(p.ts), name: techName(p.tech_id) });
+function toast(html) { const d = document.createElement('div'); d.className = 'toast'; d.innerHTML = html; $('toasts').prepend(d); setTimeout(() => d.remove(), 8000); }
+function modal(html) { $('modalBox').innerHTML = html + '<div style="text-align:right;margin-top:14px"><button class="btn sec" onclick="closeModal()">Cerrar</button></div>'; $('modal').style.display = 'flex'; }
+function closeModal() { $('modal').style.display = 'none'; }
+$('modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
+const dayRange = (d, t1 = '00:00', t2 = '23:59') => [new Date(d + 'T' + t1 + ':00').getTime(), new Date(d + 'T' + t2 + ':59.999').getTime()];
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60e3).toISOString().slice(0, 10);
+const iso = (ms) => new Date(ms).toISOString();
+function check({ data, error }) { if (error) { toast('⚠ ' + esc(error.message)); throw error; } return data; }
+async function fetchAll(build) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const data = check(await build().range(from, from + 999));
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+function getPoints(from, to, tech) {
+  return fetchAll(() => {
+    let q = sb.from('points').select('id,tech_id,lat,lon,accuracy,speed,battery,ts,source').gte('ts', iso(from)).lte('ts', iso(to)).order('ts').order('id');
+    return tech ? q.eq('tech_id', tech) : q;
+  }).then((rows) => rows.map(normP).sort((a, b) => a.name.localeCompare(b.name) || a.ts - b.ts));
+}
+const getEvents = (from, to) => fetchAll(() => sb.from('events').select('*').gte('ts', iso(from)).lte('ts', iso(to)).order('ts', { ascending: false }))
+  .then((rows) => rows.map((e) => ({ ...e, ts: Date.parse(e.ts), name: techName(e.tech_id) })));
+
+// ---------- sesión ----------
+// Se puede entrar con un usuario simple (ej. "admin"): equivale a admin@rastreo.app en Supabase.
+const toEmail = (v) => { v = v.trim().toLowerCase(); return v.includes('@') ? v : v + '@rastreo.app'; };
+$('loginForm').onsubmit = async (e) => {
+  e.preventDefault(); $('loginErr').textContent = ''; $('loginBtn').disabled = true;
+  const { error } = await sb.auth.signInWithPassword({ email: toEmail($('em').value), password: $('pw').value });
+  $('loginBtn').disabled = false;
+  if (error) $('loginErr').textContent = error.message === 'Invalid login credentials' ? 'Usuario o contraseña incorrectos' : error.message;
+};
+$('forgot').onclick = async (e) => {
+  e.preventDefault();
+  const email = toEmail($('em').value);
+  if (!$('em').value.trim()) { $('loginErr').textContent = 'Escribe tu usuario o correo y vuelve a pulsar el enlace.'; return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  $('loginErr').textContent = error ? error.message : 'Te enviamos un correo para cambiar la contraseña.';
+};
+$('newPwForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const { error } = await sb.auth.updateUser({ password: $('npw').value });
+  if (error) { $('npwErr').textContent = error.message; return; }
+  $('newPwForm').style.display = 'none'; $('loginForm').style.display = 'block'; toast('Contraseña actualizada.');
+  startApp();
+};
+$('logout').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'PASSWORD_RECOVERY') { $('login').style.display = 'flex'; $('loginForm').style.display = 'none'; $('newPwForm').style.display = 'block'; return; }
+  if (session && event !== 'TOKEN_REFRESHED') setTimeout(startApp, 0);
+});
+async function startApp() {
+  if (started || $('newPwForm').style.display === 'block') return;
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return;
+  const { data, error } = await sb.from('supervisores').select('email').limit(1);
+  if (error || !data.length) {
+    $('loginErr').textContent = 'Tu usuario no está autorizado como supervisor.';
+    await sb.auth.signOut(); return;
+  }
+  started = true;
+  $('who').textContent = session.user.email.replace('@rastreo.app', '');
+  $('login').style.display = 'none'; map.invalidateSize();
+  init();
+}
+
+// ---------- pestañas ----------
+document.querySelectorAll('nav button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('on', p.id === 'p-' + b.dataset.p));
+  if (b.dataset.p !== 'routes') routeLayer.clearLayers();
+  trailLayer[b.dataset.p === 'routes' ? 'remove' : 'addTo'](map);
+  Object.values(markers).forEach((m) => b.dataset.p === 'routes' ? m.remove() : m.addTo(map));
+  if (b.dataset.p === 'events') loadEvents();
+});
+
+// ---------- en vivo ----------
+function status(t) {
+  if (!t.last) return ['b-off', 'Sin datos'];
+  if (Date.now() - t.last.ts < ONLINE_MS) return ['b-on', 'En línea'];
+  return t.tracking ? ['b-idle', 'Sin señal'] : ['b-off', 'Fuera de jornada'];
+}
+let kpiTimer = null;
+function renderLive() {
+  if (!techs.length) { $('liveList').innerHTML = '<p class="sub">Aún no hay técnicos. Agrégalos en la pestaña <b>Técnicos</b>.</p>'; }
+  else $('liveList').innerHTML = [...techs].sort((a, b) => (b.last?.ts || 0) - (a.last?.ts || 0)).map((t) => {
+    const [cls, txt] = status(t), l = t.last;
+    return `<div class="item" onclick="focusTech(${t.id})"><div class="row"><b><span style="color:${color(t.id)}">●</span> ${esc(t.name)}</b><span class="badge ${cls}">${txt}</span></div>
+      <div class="sub">${l ? `${ago(l.ts)} · ${l.speed != null ? Math.round(l.speed) + ' km/h' : '—'} · ±${l.accuracy != null ? Math.round(l.accuracy) : '?'} m${l.battery != null ? ' · 🔋' + Math.round(l.battery) + '%' : ''}` : 'Nunca ha enviado ubicación'}</div></div>`;
+  }).join('');
+  for (const t of techs) if (t.last) placeMarker(t);
+  clearTimeout(kpiTimer); kpiTimer = setTimeout(kpis, 1500);
+}
+async function kpis() {
+  const [from, to] = dayRange(today());
+  const ev = await getEvents(from, to);
+  let km = 0; for (const id in trails) { const ll = trails[id].getLatLngs(); for (let i = 1; i < ll.length; i++) km += ll[i - 1].distanceTo(ll[i]); }
+  $('k1').textContent = techs.filter((t) => status(t)[0] === 'b-on').length;
+  $('k2').textContent = ev.filter((e) => e.type === 'entrada').length;
+  $('k3').textContent = Math.round(km / 1000);
+}
+function placeMarker(t) {
+  const l = t.last, stale = Date.now() - l.ts > ONLINE_MS;
+  const icon = L.divIcon({ className: '', html: `<div class="mk ${stale ? 'stale' : ''}" style="--c:${color(t.id)}">${esc(initials(t.name))}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] });
+  const pop = `<b>${esc(t.name)}</b><br>${fmtDT(l.ts)} (${ago(l.ts)})<br>${l.speed != null ? Math.round(l.speed) + ' km/h · ' : ''}±${Math.round(l.accuracy ?? 0)} m<br><a href="https://maps.google.com/?q=${l.lat},${l.lon}" target="_blank" rel="noopener">Abrir en Google Maps</a>`;
+  if (!markers[t.id]) { markers[t.id] = L.marker([l.lat, l.lon], { icon }).bindPopup(pop); if (!$('p-routes').classList.contains('on')) markers[t.id].addTo(map); }
+  else markers[t.id].setLatLng([l.lat, l.lon]).setIcon(icon).setPopupContent(pop);
+}
+function focusTech(id) { const m = markers[id]; if (m) { map.setView(m.getLatLng(), 16); m.openPopup(); } }
+async function loadTrails() {
+  const [from, to] = dayRange(today());
+  trailLayer.clearLayers(); for (const k in trails) delete trails[k];
+  for (const p of await getPoints(from, to)) addTrail(p);
+}
+function addTrail(p) { (trails[p.tech_id] ||= L.polyline([], { color: color(p.tech_id), weight: 3, opacity: .6 }).addTo(trailLayer)).addLatLng([p.lat, p.lon]); }
+
+// ---------- tiempo real ----------
+function connect() {
+  channel = sb.channel('rastreo')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'points' }, ({ new: row }) => {
+      const p = normP(row), t = techs.find((x) => x.id === p.tech_id);
+      if (!t) return refreshTechs();
+      if (!t.last || p.ts >= t.last.ts) t.last = p;
+      if (p.ts > Date.now() - 24 * 3600e3) addTrail(p);
+      renderLive();
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, ({ new: e }) => {
+      toast(`<b>${esc(techName(e.tech_id))}</b> <span class="ev-${e.type}">${e.type === 'entrada' ? 'llegó a' : 'salió de'}</span> ${esc(e.fence_name)} · ${fmtH(Date.parse(e.ts))}`);
+      if ($('p-events').classList.contains('on')) loadEvents();
+      renderLive();
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'technicians' }, ({ new: row }) => {
+      const t = techs.find((x) => x.id === row.id); if (!t) return;
+      if (t.tracking !== row.tracking) toast(`${esc(t.name)} ${row.tracking ? 'inició' : 'finalizó'} su jornada`);
+      t.tracking = row.tracking; renderLive();
+    })
+    .subscribe((st) => { $('live').textContent = st === 'SUBSCRIBED' ? '● en vivo' : '● reconectando…'; });
+}
+setInterval(() => started && renderLive(), 30000);
+
+// ---------- recorridos ----------
+$('rDate').value = today(); $('eDate').value = today();
+let lastRoute = [];
+async function loadRoute() {
+  const tech = $('rTech').value, [from, to] = dayRange($('rDate').value, $('rFrom').value, $('rTo').value);
+  $('rOut').innerHTML = '<p class="sub">Cargando…</p>';
+  const pts = lastRoute = await getPoints(from, to, tech);
+  routeLayer.clearLayers();
+  if (!pts.length) { $('rOut').innerHTML = '<p class="sub" style="margin-top:12px">No hay puntos en ese rango.</p>'; return; }
+  const byTech = {}; pts.forEach((p) => (byTech[p.tech_id] ||= []).push(p));
+  let html = '', bounds = [];
+  for (const id in byTech) {
+    const arr = byTech[id], c = color(+id);
+    let km = 0, stops = [], s0 = arr[0];
+    for (let i = 1; i < arr.length; i++) {
+      if ((arr[i - 1].accuracy ?? 0) < 100 && (arr[i].accuracy ?? 0) < 100) km += dist(arr[i - 1], arr[i]);
+      if (dist(s0, arr[i]) > 60) { if (arr[i - 1].ts - s0.ts >= 5 * 60e3) stops.push({ ...s0, end: arr[i - 1].ts }); s0 = arr[i]; }
+    }
+    if (arr.at(-1).ts - s0.ts >= 5 * 60e3) stops.push({ ...s0, end: arr.at(-1).ts });
+    const line = arr.map((p) => [p.lat, p.lon]); bounds.push(...line);
+    L.polyline(line, { color: c, weight: 4 }).addTo(routeLayer);
+    arr.forEach((p, i) => L.circleMarker([p.lat, p.lon], { radius: i === 0 || i === arr.length - 1 ? 7 : 3, color: c, fillColor: i === 0 ? '#1a8a4a' : i === arr.length - 1 ? '#c0392b' : c, fillOpacity: 1, weight: 1 })
+      .bindPopup(`<b>${esc(p.name)}</b> · punto ${i + 1}/${arr.length}<br>${fmtT(p.ts)}<br>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}<br>${p.speed != null ? Math.round(p.speed) + ' km/h · ' : ''}±${Math.round(p.accuracy ?? 0)} m`).addTo(routeLayer));
+    stops.forEach((s) => L.marker([s.lat, s.lon], { icon: L.divIcon({ className: '', html: '<div style="background:#d68910;color:#fff;border-radius:6px;padding:1px 5px;font-size:11px;font-weight:700;border:1px solid #fff">P</div>' }) })
+      .bindPopup(`<b>Parada</b> ${fmtH(s.ts)} – ${fmtH(s.end)} (${Math.round((s.end - s.ts) / 60e3)} min)`).addTo(routeLayer));
+    const dur = arr.at(-1).ts - arr[0].ts;
+    html += `<h3 style="margin:16px 0 4px;color:${c}">${esc(arr[0].name)}</h3>
+      <div class="stats"><div class="stat"><b>${(km / 1000).toFixed(2)} km</b><span>Distancia recorrida</span></div>
+      <div class="stat"><b>${Math.floor(dur / 3600e3)} h ${Math.round(dur % 3600e3 / 60e3)} min</b><span>Duración</span></div>
+      <div class="stat"><b>${fmtH(arr[0].ts)} – ${fmtH(arr.at(-1).ts)}</b><span>Inicio / fin</span></div>
+      <div class="stat"><b>${arr.length}</b><span>Puntos GPS</span></div>
+      <div class="stat" style="grid-column:1/3"><b>${stops.length}</b><span>Paradas de más de 5 min${stops.length ? ': ' + stops.map((s) => fmtH(s.ts) + ' (' + Math.round((s.end - s.ts) / 60e3) + ' min)').join(', ') : ''}</span></div></div>
+      <div style="max-height:260px;overflow:auto"><table><thead><tr><th>#</th><th>Hora</th><th>Lat, Lon</th><th>km/h</th><th>±m</th></tr></thead><tbody>
+      ${arr.map((p, i) => `<tr class="click" onclick="map.setView([${p.lat},${p.lon}],18)"><td>${i + 1}</td><td>${fmtT(p.ts)}</td><td>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</td><td>${p.speed != null ? Math.round(p.speed) : ''}</td><td>${p.accuracy != null ? Math.round(p.accuracy) : ''}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  }
+  $('rOut').innerHTML = html + '<button class="btn sec" style="width:100%;margin-top:12px" onclick="window.print()">Imprimir / guardar PDF</button>';
+  map.fitBounds(bounds, { padding: [30, 30] });
+}
+$('rLoad').onclick = loadRoute;
+$('rCsv').onclick = async () => {
+  const tech = $('rTech').value, [from, to] = dayRange($('rDate').value, $('rFrom').value, $('rTo').value);
+  const rows = await getPoints(from, to, tech);
+  if (!rows.length) return toast('No hay puntos en ese rango.');
+  const e = (v) => (v == null ? '' : /[",;\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  const lines = rows.map((r) => { const d = new Date(r.ts); return [r.name, d.toLocaleDateString('sv-SE'), d.toLocaleTimeString('es-CO', { hour12: false }), r.lat.toFixed(6), r.lon.toFixed(6), r.accuracy?.toFixed(0), r.speed?.toFixed(1), r.battery?.toFixed(0), `https://maps.google.com/?q=${r.lat},${r.lon}`].map(e).join(','); });
+  const csv = '﻿tecnico,fecha,hora,latitud,longitud,precision_m,velocidad_kmh,bateria_pct,google_maps\n' + lines.join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `recorridos_${$('rDate').value}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+
+// ---------- clientes (geocercas) ----------
+let pickMode = false, pickTmp = null, pickLatLng = null;
+async function loadFences() {
+  fences = check(await sb.from('geofences').select('*').order('name'));
+  fenceLayer.clearLayers();
+  fences.forEach((f) => L.circle([f.lat, f.lon], { radius: f.radius, color: '#0f3d5e', weight: 2, fillOpacity: .08, dashArray: '5 5' }).bindTooltip(esc(f.name)).addTo(fenceLayer));
+  $('fList').innerHTML = fences.length ? fences.map((f) => `<div class="item row" onclick="map.setView([${f.lat},${f.lon}],16)"><div><b>${esc(f.name)}</b><div class="sub">Radio ${Math.round(f.radius)} m</div></div><button class="btn del" onclick="event.stopPropagation();delFence(${f.id},this)">Eliminar</button></div>`).join('') : '<p class="sub">Aún no hay clientes.</p>';
+}
+async function delFence(id, btn) { if (!btn.dataset.ok) { btn.dataset.ok = 1; btn.textContent = '¿Seguro?'; return; } check(await sb.from('geofences').delete().eq('id', id)); loadFences(); }
+$('fAdd').onclick = () => { pickMode = true; $('fForm').style.display = 'block'; $('fAdd').style.display = 'none'; map.getContainer().style.cursor = 'crosshair'; };
+function endPick() { pickMode = false; pickLatLng = null; if (pickTmp) pickTmp.remove(); pickTmp = null; $('fForm').style.display = 'none'; $('fAdd').style.display = 'block'; $('fHint').textContent = 'Haz clic en el mapa en la ubicación del cliente.'; map.getContainer().style.cursor = ''; }
+$('fCancel').onclick = endPick;
+map.on('click', (e) => {
+  if (!pickMode) return;
+  pickLatLng = e.latlng; if (pickTmp) pickTmp.remove();
+  pickTmp = L.circle(e.latlng, { radius: +$('fRad').value || 100, color: '#d68910' }).addTo(map);
+  $('fHint').textContent = 'Ubicación elegida. Escribe el nombre y guarda.';
+});
+$('fRad').oninput = () => pickTmp && pickTmp.setRadius(+$('fRad').value || 100);
+$('fSave').onclick = async () => {
+  if (!pickLatLng) return ($('fHint').textContent = '⚠ Primero haz clic en el mapa.');
+  if (!$('fName').value.trim()) return ($('fHint').textContent = '⚠ Escribe un nombre.');
+  check(await sb.from('geofences').insert({ name: $('fName').value.trim(), lat: pickLatLng.lat, lon: pickLatLng.lng, radius: Math.max(20, +$('fRad').value || 100) }));
+  $('fName').value = ''; endPick(); loadFences(); toast('Cliente guardado.');
+};
+
+// ---------- visitas ----------
+async function loadEvents() {
+  const [from, to] = dayRange($('eDate').value);
+  const ev = await getEvents(from, to);
+  $('eList').innerHTML = ev.length ? `<table><thead><tr><th>Hora</th><th>Técnico</th><th>Evento</th><th>Cliente</th></tr></thead><tbody>${ev.map((e) => `<tr class="click" onclick="map.setView([${e.lat},${e.lon}],17)"><td>${fmtH(e.ts)}</td><td>${esc(e.name)}</td><td class="ev-${e.type}">${e.type === 'entrada' ? 'Llegó' : 'Salió'}</td><td>${esc(e.fence_name)}</td></tr>`).join('')}</tbody></table>` : '<p class="sub">Sin visitas ese día.</p>';
+}
+$('eLoad').onclick = loadEvents;
+
+// ---------- técnicos ----------
+async function refreshTechs() {
+  const list = check(await sb.from('technicians').select('*').order('name'));
+  const last = check(await sb.from('last_points').select('*'));
+  techs = list.map((t) => ({ ...t, last: null }));
+  for (const p of last) { const t = techs.find((x) => x.id === p.tech_id); if (t) t.last = normP(p); }
+  const sel = $('rTech').value;
+  $('rTech').innerHTML = '<option value="">Todos los técnicos</option>' + techs.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+  $('rTech').value = sel;
+  $('tList').innerHTML = techs.map((t) => `<div class="item"><div class="row"><b>${esc(t.name)}</b><span><button class="btn sec" style="padding:5px 9px" onclick="showLink(${t.id})">Enlace / QR</button> <button class="btn del" onclick="delTech(${t.id},this)">Eliminar</button></span></div>${t.phone ? `<div class="sub">${esc(t.phone)}</div>` : ''}</div>`).join('');
+  renderLive();
+}
+const baseUrl = () => location.origin + location.pathname.replace(/[^/]*$/, '');
+function showLink(id) {
+  const t = techs.find((x) => x.id === id), link = baseUrl() + 't.html#' + t.token;
+  const traccar = CONFIG.SUPABASE_URL.replace(/\/$/, '') + '/functions/v1/osmand';
+  modal(`<h3 style="margin-top:0">${esc(t.name)}</h3>
+    <p><b>Opción 1 – Navegador:</b> envía este enlace al técnico (WhatsApp) o que escanee el QR. Debe abrirlo y pulsar <i>Iniciar jornada</i>.</p>
+    <p><code>${esc(link)}</code> <button class="btn sec" style="padding:4px 8px" onclick="navigator.clipboard.writeText('${link}').then(()=>this.textContent='Copiado')">Copiar</button></p>
+    <div id="qr" style="display:flex;justify-content:center;margin:10px 0"></div>
+    <p><b>Opción 2 – App Traccar Client</b> (sigue rastreando con la pantalla apagada):</p>
+    <ul style="padding-left:18px;line-height:1.6"><li>Identificador del dispositivo: <code>${esc(t.token)}</code></li><li>URL del servidor: <code>${esc(traccar)}</code></li><li>Precisión: Alta · Intervalo: 30 s</li></ul>`);
+  if (window.QRCode) new QRCode($('qr'), { text: link, width: 180, height: 180 });
+}
+async function delTech(id, btn) {
+  if (!btn.dataset.ok) { btn.dataset.ok = 1; btn.textContent = '¿Borrar con todo su historial?'; return; }
+  check(await sb.from('technicians').delete().eq('id', id));
+  markers[id]?.remove(); delete markers[id]; await refreshTechs(); loadTrails();
+}
+$('tAdd').onclick = async () => {
+  const name = $('tName').value.trim(); if (!name) return;
+  const t = check(await sb.from('technicians').insert({ name, phone: $('tPhone').value.trim() || null }).select().single());
+  $('tName').value = $('tPhone').value = ''; await refreshTechs(); showLink(t.id);
+};
+
+// ---------- inicio ----------
+async function init() {
+  try {
+    await refreshTechs(); await loadFences(); await loadTrails(); connect();
+    const pts = techs.filter((t) => t.last).map((t) => [t.last.lat, t.last.lon]);
+    if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 15 });
+  } catch (e) { console.error(e); }
+}
+startApp();
+</script>
+</body>
+</html>
